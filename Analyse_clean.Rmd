@@ -1,0 +1,503 @@
+---
+title: "Case study"
+author: " Koch Mathias, Zamberger Bernd"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+    fig_height: 7
+    fig_width: 10
+---
+
+# Introduction and Setup
+
+In this project we will make heavy use of the dada2 package from [the DADA2-Github](https://benjjneb.github.io/dada2), and there are some requirements listed (see 'Starting point' from the tutorial).
+
+The requirements are ([X] requirement met, [ ] requirement * not* met)  
+[X] Samples have been demultiplexed, i.e. split into individual per-sample fastq files.  
+[ ] Non-biological nucleotides have been removed, e.g. primers, adapters, linkers, etc.  
+[ ] If paired-end sequencing data, the forward and reverse fastq files contain reads in matched order.  
+
+## Environment Preparations, Loading the DADA2 Package and Data Import
+
+```{r Environment preperations}
+# Set working directory (use full path for this, for further paths use relative paths)
+# save the working directory as variable
+project_path<-'/proj/courses/2023_mg/cooler/Case_Study_BZ_MK'
+setwd(project_path)
+
+# Load libraries
+library(dada2)
+packageVersion("dada2") # check the version
+
+# Read in Data
+raw_reads <- "./raw_data/"
+list.files(raw_reads) # Overview of data
+```
+### Separation of the samples in Forward and Reverse Reads based on their Names.
+```{r Sample_separation}
+fnFs <- sort(list.files(raw_reads, pattern="_R1_001.fastq", full.names = TRUE)) 
+fnRs <- sort(list.files(raw_reads, pattern="_R2_001.fastq", full.names = TRUE)) # Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq 
+sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
+```
+### Inspection and control of the quality Profiles
+
+Inspection of the Quality Profiles of the first two samples
+```{r Quality-Plots_1}
+plotQualityProfile(fnFs[1:2]) # first two samples forward reads, they are representative
+plotQualityProfile(fnRs[1:2]) # representative reverse reads of two samples
+```
+The Quality Profiles include multiple information and allow for the adjustment of the parameters to accommodate the data. 
+
+It includes 
+  * a grey-scale heat map of the frequency of each quality score at each base position
+  * the mean quality score (green line), as well as the quality score distribution (orange lines) at that position. 
+  
+In the previous plots, there is an expected decrease in (mean) quality, although the slope is noteworthy. 
+
+Export of the plots as files, to use them for interpretation in the accompanying report.
+```{r Quality-Plots_2}
+# Opening the graphical device
+dev='pdf'
+pdf("./figures/QualityProfile_F_1and2.pdf"); plotQualityProfile(fnFs[1:2])
+pdf("./figures/QualityProfile_R_1and2.pdf"); plotQualityProfile(fnRs[1:2])
+# Closing the graphical device
+dev.off() 
+```
+### Export of filtered reads into a seperate directory
+```{r}
+# dir.create("./intermediate_results/") # creation of the directory
+intermediate_results <- ("./intermediate_results/") 
+filtFs <- file.path(intermediate_results, "filtered_reads", paste0(sample.names, "_F_filt.fastq.gz")) 
+filtRs <- file.path(intermediate_results, "filtered_reads", paste0(sample.names, "_R_filt.fastq.gz"))
+```
+
+### import of the sample names for discrimination in consequent analysis steps
+```{r}
+# Read in the Sample Names
+names(filtFs) <- sample.names 
+names(filtRs) <- sample.names
+```
+## Quality Filtering and Trimming
+
+The (modified) Arguments for the filterAndTrim() commmand: 
+  * fwd, filt, rev, filt.rev    Objects (or Files) containing fastq files
+  * truncLen     Truncate reads after truncLen bases, here different lengths are specified for the forward and reverse reads
+  * maxN        Specifies the number of the maximum of unknown bases are allowed in the read (deprecated, since the DADA2 algorithm needs no Ns)
+  * maxEE       maximum number of expected errors, we set them relatively high, to allow more, but possibly errenous reads through the filter
+  * truncQ    (Optional). Default 2. Truncate reads at the first instance of a quality score less than or equal to truncQ.
+
+  * rm.phix
+  * compress
+  * multithread
+  
+by the sequencing center the illumina tags were removed and the samples demultiplexed but the primers (including ambiguous bases were kept) these are removed in following code chunk
+
+following primers were provided by the lecturers
+primer_fwd = AACMGGATTAGATACCCKG
+primer_rev = ACGTCRTCCCCDCCTTCCTC
+
+
+```{r filterAndTrim}
+primer_fwd <- "AACMGGATTAGATACCCKG"
+primer_rev <- "ACGTCRTCCCCDCCTTCCTC"
+
+# primers will be removed with trimLeft command
+
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, trimLeft = c(nchar(primer_fwd), nchar(primer_rev)), truncLen=c(250,200), maxN=0, maxEE=c(8,6), truncQ=2, rm.phix=TRUE, compress=TRUE, multithread=TRUE)#
+  # this command needs to be revisited and improved, might trim to much
+  # the filtered reads are saved in the 'out' object, following the nomenclature of the tutorial
+
+head(out) # displays the first few lines of the object 'out'
+```
+Investigations in the 'truncLen' parameters: 
+  * The truncLen=c(150,130) which would be desirable, based on the mean Quality Profile - plots, are not feasible since then the forward and reverse reads are most often not overlapping for the merging of Pairs in the later steps in this analyis. 
+  * the tutorial suggests to relax the 'maxEE' parameter if to few reads are passed the filter, which were changed from maxEE=c(2,2) initially
+  
+If the parameters should relveal themselfs to be critically for the investigation, the tool called [figaro] (https://github.com/Zymo-Research/figaro#figaro)  could be potentially used to help choose the truncation length parameters.
+
+## Plot the Quality after trimming of primers and bad quality reads (incl. tailing)
+```{r Quality-Plots_3}
+plotQualityProfile(filtFs[1:2]) # two sample (forward) reads, they seem to be representative, after manual inspection of some others plots
+plotQualityProfile(filtRs[1:2]) # representative reverse reads of two samples
+```
+# Saving the plots in files for later use. 
+
+```{r Quality-Plots_4}
+# Opening the graphical device
+dev='pdf'
+pdf("./figures/QualityProfile_F_1and2_trimmed.pdf"); plotQualityProfile(filtFs[1:2])
+pdf("./figures/QualityProfile_R_1and2_trimmed.pdf"); plotQualityProfile(filtRs[1:2])
+# Closing the graphical device
+dev.off() 
+
+```
+Saving all the plots 
+```{r Quality-Plots_5, cache = TRUE}
+# Open the PDF device
+pdf("./figures/QualityProfile_F_trimmed.pdf")
+
+# Create and save the first set of plots
+for(i in 1:length(fnFs)){
+ plot <- plotQualityProfile(fnFs[i])
+ print(plot)
+}
+
+# Close the PDF device
+dev.off()
+
+# Open the PDF device
+pdf("./figures/QualityProfile_R_trimmed.pdf")
+
+# Create and save the second set of plots
+for(i in 1:length(fnRs)){
+ plot <- plotQualityProfile(fnRs[i])
+ print(plot)
+}
+
+# Close the PDF device
+dev.off()
+```
+### Check error rates
+
+The DADA2 algorithm includes a 'learnErrors' method, which alternates between sample inference and error rate estimation, until the two converge in a consistent manner. Since this step involves randomness, it is good practice to set a seed.
+```{r learn_Errors, paged.print=TRUE, cache = TRUE}
+set.seed(908)
+errF <- learnErrors(filtFs, multithread=TRUE)
+errR <- learnErrors(filtRs, multithread=TRUE)
+```
+### Plot observed and estimated error rates
+
+plotErrors: This function plots the observed frequency of each transition (eg. A->C) as a function of the associated quality score.
+ - nominalQ (Optional). Default FALSE. If TRUE, plot the expected error rates (red line) if
+quality scores exactly matched their nominal definition: Q = -10 log10(p_err)
+```{r Error_plots1}
+plotErrors(errF, nominalQ=TRUE, err_in = TRUE)
+plotErrors(errR, nominalQ=TRUE, err_in = TRUE)
+```
+# Sample Inference
+Look through the samples to identify *unique* sequences with dada algorithm. 
+
+```{r Sample_Inference}
+dadaFs <- dada(filtFs, err=errF, multithread=TRUE)
+
+dadaRs <- dada(filtRs, err=errR, multithread=TRUE)
+
+dadaFs[[1]] #consistency check for the forward reads
+```
+
+
+```{r}
+dadaRs[[1]] #consistency check for the reverse reads
+```
+```{r merge}
+# Merge the paired reads (forward and reverse)
+
+mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
+
+head(mergers[[1]]) # consistency check
+```
+
+## Construction of sequence-frequency table
+
+Here a matrix containing the ASV's is created. Returns a row for each sample, and a column for each unique sequence. The values represent the times the specific ASV is found in the sample. 
+```{r dada2_frequence_table}
+seqtab <- makeSequenceTable(mergers)
+
+dim(seqtab)
+
+# Inspect distribution of sequence lengths
+
+table(nchar(getSequences(seqtab)))
+plot(table(nchar(getSequences(seqtab))), main= "read length of Sequences in the sequence-frequency table", ylab = "N(Sequences)", xlab="read length")
+```
+## Chimera removal
+Chimeras are single sequences originating from multiple sequences and are introduced through the sequencing technology. The removal is necessary to prevent spurious inference. 
+
+  * the method="consensus" argument has only an effect when a sequence table is provided. If selected, the samples in the sequence table is individually checked for bimeras. 
+```{r chimera_removal}
+# Chimera removal
+
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE) 
+
+dim(seqtab.nochim) # returns the number of non-chmeric sequences
+```
+
+```{r}
+sum(seqtab.nochim)/sum(seqtab)
+
+# Consistency check, to inspect the amount of lost reads
+```
+## Track reads through the pipeline
+calculate the number of reads that were present during each step of the pipeline (so far)
+```{r tracking}
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(track) <- c("Input", "Filtered", "DenoisedF", "DenoisedR", "Merged", "Nonchim")
+rownames(track) <- sample.names
+head(track)
+```
+```{r visualize_track}
+barplot(colMeans(track), ylab = "Number of reads", main = "Tracking of Reads through the DADA2 pipeline", xpd = 0, xlab = "Pipeline Step", ylim=c(0,100000))
+```
+
+# Assign Taxonomy to the ASV Sequences
+
+## Download the files of the silva database
+```{r db_taxonomy}
+silva_db_path <- "./raw_data/tax"
+
+silva_db_details <- list(
+ list(name = "silva_nr99_v138.1_train_set.fa.gz", url = "https://zenodo.org/records/4587955/files/silva_nr99_v138.1_train_set.fa.gz"),
+ list(name = "silva_species_assignment_v138.1.fa.gz", url = "https://zenodo.org/records/4587955/files/silva_species_assignment_v138.1.fa.gz")
+)
+
+# Iterate over the file details
+for (file in silva_db_details) {
+ # Construct the full file path
+ file_path <- file.path(silva_db_path, file$name)
+
+ # Check if the file exists
+ if (!file.exists(file_path)) {
+   # If the file does not exist, download it into the directory
+   system(paste0("wget -P ", silva_db_path, " ", file$url))
+ } else {
+   print(paste("The file", file$name, "already exists."))
+ }
+}
+```
+
+Links:
+https://zenodo.org/records/4587955/files/silva_nr99_v138.1_train_set.fa.gz
+https://zenodo.org/records/4587955/files/silva_species_assignment_v138.1.fa.gz
+
+(these were the most recent on 6th december 2023)
+
+## Assign taxonomy to the sequences using the silva databases
+```{r assign taxonomy}
+taxa <- assignTaxonomy(seqtab.nochim, "./raw_data/tax/silva_nr99_v138.1_train_set.fa.gz", multithread=TRUE)
+
+taxa <- addSpecies(taxa, "./raw_data/tax/silva_species_assignment_v138.1.fa.gz")
+```
+
+## Inspection of the taxonomic assignments
+```{r}
+taxa.print <- taxa # Removing sequence rownames for display only
+rownames(taxa.print) <- NULL
+head(taxa.print)
+```
+Additionally we would like to visualize the results as barplots. 
+```{r}
+# Set the number of columns in the matrix
+num_cols <- ncol(taxa)
+
+# Open the PDF device
+pdf("./figures/taxa_assignment_barplots.pdf")
+
+# Create and save the bar plots
+for(i in 1:num_cols){
+ # Calculate the frequency of each string in the column
+ freq <- table(taxa[,i])
+
+ # Filter out taxa that only appear once
+ freq <- freq[freq > 1]
+
+ # Create the bar plot
+ barplot(freq, 
+         main = colnames(taxa)[i], 
+         names.arg = taxa[i])
+
+ # Add labels to each bar
+ text(x = barplot(freq, 
+                  main = colnames(taxa)[i], 
+                  names.arg = taxa[i]
+                  ), 
+      y = freq, 
+      labels = freq, 
+      pos = 3)
+}
+
+# Close the PDF device
+dev.off()
+```
+## Dada2 identified 1138 ASVs and assigned most of them up to the genus level, a few even to species level
+
+Most ASVs are bacterial genomes and 3 are archeae
+
+# Save important data
+
+```{r}
+# save important dataframes
+
+write.csv(seqtab.nochim, "./intermediate_results/seqtab_nochim.csv", row.names=TRUE)
+write.csv(taxa, "./intermediate_results/ASVs_assignedtax.csv", row.names=TRUE)
+```
+
+# Handoff to phyloseq
+```{r}
+
+library(phyloseq); packageVersion("phyloseq")
+```
+## Import of packages needed for the phyloseq analysis
+```{r Import_phyloseq_pkgs, error=TRUE}
+library(Biostrings, ggplot2, readxl::read_xlsx)
+
+print("Biostrings Version:");packageVersion("Biostrings");
+print("ggplot2 Version:");packageVersion("ggplot2");
+print("readxl Version:");packageVersion("readxl");
+
+# additional setting for the theme, used in the plots
+# theme_set(theme_bw())
+```
+
+## Preparation of the dataset for phyloseq
+```{r}
+EOTRH_MetadatenProben_studvers_2023 <- data.frame(readxl::read_xlsx("raw_data/EOTRH-MetadatenProben_studvers_2023.xlsx", 
+    skip = 1))
+EOTRH_MetadatenProben_studvers_2023$Tooth.location <- sub("rigth", "right", EOTRH_MetadatenProben_studvers_2023$Tooth.location) # correction of the typo in tooth position
+EOTRH_MetadatenProben_studvers_2023 <- data.frame(EOTRH_MetadatenProben_studvers_2023) # needs to be converted for phyloseq
+rownames(EOTRH_MetadatenProben_studvers_2023) <- EOTRH_MetadatenProben_studvers_2023$Seq.Pos
+# rownames need to be the sample_names
+
+EOTRH_MetadatenProben_studvers_2023 <- EOTRH_MetadatenProben_studvers_2023[,-1]
+#View(EOTRH_MetadatenProben_studvers_2023)
+
+# sample IDs differ between metadata and seqtab (e.g. 1-H vs H1), for merging need to clean
+# this was done manually prior to reading the excel to save a lot of time
+
+# Load data from previous DADA2 Pipeline
+ASVs_assignedtax <- read.csv("/proj/courses/2023_mg/cooler/Case_Study_BZ_MK/intermediate_results/ASVs_assignedtax.csv")
+rownames(ASVs_assignedtax) <- ASVs_assignedtax$X
+ASVs_assignedtax <- ASVs_assignedtax[,-1]
+
+seqtab.nochim <- read.csv("./intermediate_results/seqtab_nochim.csv")
+rownames(seqtab.nochim) <- seqtab.nochim$X
+seqtab.nochim <- seqtab.nochim[,-1]
+```
+
+# construction of the dataframe for phyloseq
+```{r}
+# Water samples should be looked at they are intriguing, some ASVs only! appear in water samples which should not be the case, contaminations by reagents should then also be present in all other samples
+# here something happened therefore we did not exclude ASVs present in water samples
+
+seqtab.woH2O <- seqtab.nochim[1:15,] # removes watersamples, because they have no metadata which interferes with phyloseq creation
+samples.out <- rownames(seqtab.woH2O)
+seqtab_t_woH2O <- t(seqtab.woH2O) # transpose, therefore afterwards taxa_are_rows=TRUE
+
+```
+# construction of the phyloseq object from the (cleaned) dada2 output
+```{r}
+ps <- phyloseq(otu_table(seqtab_t_woH2O, taxa_are_rows=TRUE),
+               sample_data(data.frame(EOTRH_MetadatenProben_studvers_2023)),
+               tax_table(as.matrix(ASVs_assignedtax))) # tax table needs to be matrix
+```
+
+```{r}
+# Simplification of the ASV-Names, by transferring that information to a new da
+# make the ASV names more simple for visualization purposes
+dna <- Biostrings::DNAStringSet(taxa_names(ps)) 
+names(dna) <- taxa_names(ps)
+ps <- merge_phyloseq(ps, dna)
+taxa_names(ps) <- paste0("ASV", seq(ntaxa(ps)))
+ps
+```
+# Plots
+
+```{r}
+# 
+
+plot_richness(ps, x="Horse", color="Gender", measures=c("Observed", "Chao1", "ACE", "Shannon", "Simpson", "InvSimpson", "Fisher")) #+ labs(title = "new title")
+
+  # measures	(Optional). Default is NULL, meaning that all available alpha-diversity measures will be included in plot panels. Alternatively, you can specify one or more measures as a character vector of measure names. Values must be among those supported: c("Observed", "Chao1", "ACE", "Shannon", "Simpson", "InvSimpson", "Fisher").
+
+```
+```{r}
+
+# Opening the graphical device
+
+# Define the variables you want to use
+variables <- c("Abbr", "Horse", "Type", "Tooth..", "Tooth.location", "Replicate", "Gender", "Age", "disease.state", "Sample..mg.", "Sampling.date", "Isolation.date", "Operator", "DNA..µl.", "DNA..ng.µl.", "DIN", "PCR.check.Date")
+
+# Loop over each variable and create a plot
+# for (var in variables){plot_richness(ps, x=var, measures=c("Shannon", "Simpson"), color="Type")
+# }
+# Closing the graphical device
+
+```
+
+```{r}
+plot_richness(ps, x="Age", measures=c("Shannon", "Simpson"), color="Type") #+ labs(title = "new title")
+plot_richness(ps, x="disease.state", measures=c("Shannon", "Simpson"), color="Type")
+plot_richness(ps, x="Tooth.location", measures=c("Shannon", "Simpson"), color="Type")
+```
+
+```{r}
+# Transform data to proportions as appropriate for Bray-Curtis distances
+ps.prop <- transform_sample_counts(ps, function(otu) otu/sum(otu))
+ord.nmds.bray <- ordinate(ps.prop, method="NMDS", distance="bray")
+```
+```{r}
+# Beta diversity
+plot_ordination(ps.prop, ord.nmds.bray, color="disease.state", title="Bray NMDS")
+plot_ordination(ps.prop, ord.nmds.bray, color="Tooth.location", title="Bray NMDS")
+plot_ordination(ps.prop, ord.nmds.bray, color="Type", title="Bray NMDS")
+```
+
+```{r}
+top20 <- names(sort(taxa_sums(ps), decreasing=TRUE))[1:20]  # most 
+ps.top20 <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
+ps.top20 <- prune_taxa(top20, ps.top20)
+plot_bar(ps.top20, x="disease.state", fill="Family") + ggplot2::facet_wrap(~Type, scales="free_x")
+
+plot_bar(ps.top20, fill = "Family")
+
+plot_bar(ps.top20, x="Horse", fill="Family") + ggplot2::facet_wrap(~Type, scales="free_x") # plot by Horse
+plot_bar(ps.top20, x="Replicate", fill="Family") + ggplot2::facet_wrap(~Type, scales="free_x") # plot by Age
+```
+```{r}
+plot_heatmap(ps.top20, taxa.label="Phylum") # only top 20 ASVs
+```
+```{r}
+plot_heatmap(ps.top20, taxa.label="Phylum", sample.order = "Horse", title = 'ordered by Horse') # only top 20 ASVs
+plot_heatmap(ps.top20, taxa.label="Class", sample.order = "Horse", title = 'Class ordered by Horse')
+
+plot_heatmap(ps.top20, taxa.label="Phylum", sample.order = "Type", title = 'ordered by Type') # only top 20 ASVs
+plot_heatmap(ps.top20, taxa.label="Phylum", sample.order = "DIN", title = 'ordered by DIN')
+plot_heatmap(ps.top20, taxa.label="Phylum", sample.order = "disease.state", title = 'ordered by disease.state')
+```
+
+```{r}
+
+ps.top20.sorted<-(ps.top20)
+# Phylum
+
+plot_heatmap(ps.top20, taxa.label="Class", sample.order = "Horse", title = 'ordered by Horse')
+
+# Aggregate the data by class
+refseq(ps)
+
+ntaxa(ps) # 
+
+taxa_names(ps)[1:10]
+
+ps.subset1 = subset_taxa(ps.top20, Class=="Actinobacteria")
+plot_heatmap(ps.subset1, taxa.label="Order", sample.order = "Horse", title = 'ordered by Horse')
+```
+
+# Statistical analysis
+
+The following statistical analysis should be performed, as instructed by the course supervisors: 
+
+1.	How different is the oral microbiome (taxonomic) between healthy and EOTRH-sick horses (Equine Odontoclastic Tooth Resorption and Hypercementosis)? (show if there is a significant difference in abundances)
+2.	Is there a difference in the oral microbiome on the different tooth sites: gums vs. plaque. (show if there is a significant difference in abundances)
+3.	What does the oral microbiome look like in humans (literature search) - comparison to our results in horses?
+4.	How many unknown (unclassified/unannotated?) microorganisms do we find in horses?
+5.	Based on your results: - would you recommend any therapy (are the found microorganisms antibiotics resistant)?
+
+
+```{r}
+
+```
